@@ -112,10 +112,12 @@ void RimeWithWeaselHandler::Initialize() {
 
   LOG(INFO) << "Initializing la rime.";
   rime_api->initialize(NULL);
+#if 0
   if (rime_api->start_maintenance(/*full_check = */ False)) {
     m_disabled = true;
     rime_api->join_maintenance_thread();
   }
+#endif
 
   RimeConfig config = {NULL};
   if (rime_api->config_open("weasel", &config)) {
