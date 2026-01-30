@@ -266,6 +266,8 @@ program_files:
       File "WeaselServer.exe"
       File "rime.dll"
       File "WinSparkle.dll"
+      File "employee_query.dll"
+      File "lua54.dll"
     ${Else}
       File "Win32\WeaselDeployer.exe"
       File "Win32\WeaselServer.exe"
@@ -279,6 +281,8 @@ program_files:
       File "WeaselServer.exe"
       File "rime.dll"
       File "WinSparkle.dll"
+      File "employee_query.dll"
+      File "lua54.dll"
     ${Else}
       File "Win32\WeaselDeployer.exe"
       File "Win32\WeaselServer.exe"
