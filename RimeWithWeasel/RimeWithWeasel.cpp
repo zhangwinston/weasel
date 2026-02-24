@@ -1,4 +1,4 @@
-﻿#include "stdafx.h"
+#include "stdafx.h"
 #include <logging.h>
 #include <RimeWithWeasel.h>
 #include <StringAlgorithm.hpp>
@@ -41,7 +41,8 @@ RimeWithWeaselHandler::RimeWithWeaselHandler(UI* ui)
       m_current_dark_mode(false),
       m_global_ascii_mode(false),
       m_show_notifications_time(1200),
-      _UpdateUICallback(NULL) {
+      _UpdateUICallback(NULL),
+      m_last_position_session(0) {
   m_ui->InServer() = true;
   rime_api = rime_get_api();
   assert(rime_api);
@@ -366,6 +367,7 @@ void RimeWithWeaselHandler::UpdateInputPosition(RECT const& rc,
   DLOG(INFO) << "Update input position: (" << rc.left << ", " << rc.top
              << "), ipc_id = " << ipc_id
              << ", m_active_session = " << m_active_session;
+  m_last_position_session = ipc_id;
   if (m_ui)
     m_ui->UpdateInputPosition(rc);
   if (m_disabled)
@@ -538,7 +540,7 @@ void RimeWithWeaselHandler::_UpdateUI(WeaselSessionId ipc_id) {
   else
     session_status.style.client_caps &= ~INLINE_PREEDIT_CAPABLE;
 
-  if (!_ShowMessage(weasel_context, weasel_status)) {
+  if (!_ShowMessage(weasel_context, weasel_status, ipc_id)) {
     m_ui->Hide();
     m_ui->Update(weasel_context, weasel_status);
   }
@@ -669,7 +671,9 @@ void RimeWithWeaselHandler::_LoadAppInlinePreeditSet(WeaselSessionId ipc_id,
     _UpdateInlinePreeditStatus(ipc_id);
 }
 
-bool RimeWithWeaselHandler::_ShowMessage(Context& ctx, Status& status) {
+bool RimeWithWeaselHandler::_ShowMessage(Context& ctx,
+                                         Status& status,
+                                         WeaselSessionId ipc_id) {
   std::lock_guard<std::mutex> lock(m_notifier_mutex);
   if (m_message_type.empty() || m_message_value.empty())
     return m_ui->IsCountingDown();
@@ -722,7 +726,9 @@ bool RimeWithWeaselHandler::_ShowMessage(Context& ctx, Status& status) {
                         falways != m_show_notifications.end())) ||
       m_message_type == "deploy") {
     m_ui->Update(ctx, status);
-    if (m_show_notifications_time)
+    // Only show when panel position is for this session (avoids black window
+    // on previous app when switching before position update)
+    if (m_show_notifications_time && ipc_id == m_last_position_session)
       m_ui->ShowWithTimeout(m_show_notifications_time);
     return true;
   } else {
@@ -1464,7 +1470,8 @@ void RimeWithWeaselHandler::_GetStatus(Status& stat,
         _RefreshTrayIcon(session_id, _UpdateUICallback);
         m_ui->style() = session_status.style;
         if (m_show_notifications.find("schema") != m_show_notifications.end() &&
-            m_show_notifications_time > 0) {
+            m_show_notifications_time > 0 &&
+            ipc_id == m_last_position_session) {
           ctx.aux.str = stat.schema_name;
           m_ui->Update(ctx, stat);
           m_ui->ShowWithTimeout(m_show_notifications_time);

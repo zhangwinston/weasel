@@ -51,6 +51,9 @@ void UIImpl::Hide() {
   if (!panel.IsWindow())
     return;
   panel.ShowWindow(SW_HIDE);
+  // Move off-screen so a stray show (e.g. after window switch) is not visible
+  panel.SetWindowPos(NULL, -10000, -10000, 0, 0,
+                     SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOREDRAW);
   shown = false;
   if (timer) {
     KillTimer(panel.m_hWnd, AUTOHIDE_TIMER);
