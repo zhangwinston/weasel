@@ -73,7 +73,9 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
                                    const std::string& schema_id);
   void _LoadAppInlinePreeditSet(WeaselSessionId ipc_id,
                                 bool ignore_app_name = false);
-  bool _ShowMessage(weasel::Context& ctx, weasel::Status& status);
+  bool _ShowMessage(weasel::Context& ctx,
+                    weasel::Status& status,
+                    WeaselSessionId ipc_id);
   bool _Respond(WeaselSessionId ipc_id, EatLine eat);
   void _ReadClientInfo(WeaselSessionId ipc_id, LPWSTR buffer);
   void _GetCandidateInfo(weasel::CandidateInfo& cinfo, RimeContext& ctx);
@@ -120,4 +122,5 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   bool m_global_ascii_mode;
   int m_show_notifications_time;
   DWORD m_pid;
+  WeaselSessionId m_last_position_session;  // only show notification when match
 };

@@ -173,10 +173,11 @@ void WeaselPanel::Refresh() {
     ReleaseDC(dc);
     _ResizeWindow();
     _RepositionWindow();
-    if (m_ctx != m_octx) {
-      m_octx = m_ctx;
-      RedrawWindow();
-    }
+    m_octx = m_ctx;
+    // Always redraw after layout/resize/reposition so the buffer matches the
+    // window; skipping when m_ctx==m_octx left stale/black buffer after
+    // commit+window switch (single-char commit especially)
+    RedrawWindow();
   }
 }
 
@@ -603,11 +604,15 @@ void WeaselPanel::_HighlightText(CDCHandle& dc,
     pBitmapDropShadow = NULL;
   }
 
-  // 必须back_color非完全透明才绘制
+  // Draw opaque background as before; for BACKGROUND with transparent color,
+  // fill with transparent to avoid uninitialized region showing as black
   if (COLORNOTTRANSPARENT(color)) {
     Gdiplus::Color back_color = GDPCOLOR_FROM_COLORREF(color);
     Gdiplus::SolidBrush back_brush(back_color);
     g_back.FillPath(&back_brush, hiliteBackPath);
+  } else if (type == BackType::BACKGROUND) {
+    const Gdiplus::SolidBrush transparent_brush(Gdiplus::Color(0, 0, 0, 0));
+    g_back.FillPath(&transparent_brush, hiliteBackPath);
   }
   // draw border, for bordercolor not transparent and border valid
   if (COLORNOTTRANSPARENT(bordercolor) && DPI_SCALE(m_style.border) > 0) {
@@ -989,6 +994,10 @@ void WeaselPanel::DoPaint(CDCHandle dc) {
   // turn off WS_EX_TRANSPARENT, for better resp performance
   ModifyStyleEx(WS_EX_TRANSPARENT, WS_EX_LAYERED);
   GetClientRect(&rcw);
+  if (rcw.Width() <= 0 || rcw.Height() <= 0) {
+    ShowWindow(SW_HIDE);
+    return;
+  }
   // prepare memDC
   CDCHandle hdc = ::GetDC(m_hWnd);
   CDCHandle memDC = ::CreateCompatibleDC(hdc);
@@ -997,6 +1006,10 @@ void WeaselPanel::DoPaint(CDCHandle dc) {
   ReleaseDC(hdc);
   bool drawn = false;
   if (!hide_candidates) {
+    // Clear entire buffer to transparent so margin/shadow area is not left
+    // uninitialized (black); avoids small black window e.g. after deploy
+    Gdiplus::Graphics g_clear(memDC);
+    g_clear.Clear(Gdiplus::Color(0, 0, 0, 0));
     CRect auxrc = m_layout->GetAuxiliaryRect();
     CRect preeditrc = m_layout->GetPreeditRect();
     if (m_istorepos) {
@@ -1034,9 +1047,13 @@ void WeaselPanel::DoPaint(CDCHandle dc) {
       delete[] rects;
       delete[] btmys;
     }
-    // background and candidates back, hilite back drawing start
-    if ((!m_ctx.empty() && !m_style.inline_preedit) ||
-        (m_style.inline_preedit && (m_candidateCount || !m_ctx.aux.empty()))) {
+    // Draw background for normal content; also when only status icon is shown
+    // (e.g. ESC, move cursor) so memDC is filled and no black window flashes
+    bool need_background =
+        (!m_ctx.empty() && !m_style.inline_preedit) ||
+        (m_style.inline_preedit && (m_candidateCount || !m_ctx.aux.empty())) ||
+        (m_ctx.empty() && m_layout->ShouldDisplayStatusIcon());
+    if (need_background) {
       CRect backrc = m_layout->GetContentRect();
       _HighlightText(memDC, backrc, m_style.back_color, m_style.shadow_color,
                      DPI_SCALE(m_style.round_corner_ex), BackType::BACKGROUND,
@@ -1106,9 +1123,15 @@ void WeaselPanel::DoPaint(CDCHandle dc) {
       memDC.DrawIconEx(iconRect.left, iconRect.top, icon, 0, 0);
       drawn = true;
     }
-    /* Nothing drawn, hide candidate window */
-    if (!drawn)
+    // Nothing drawn: hide and return without _LayerUpdate so uninitialized
+    // memDC is not committed to the layered window (avoids black flash on next
+    // show)
+    if (!drawn) {
       ShowWindow(SW_HIDE);
+      ::DeleteDC(memDC);
+      ::DeleteObject(memBitmap);
+      return;
+    }
   }
   _LayerUpdate(rcw, memDC);
 

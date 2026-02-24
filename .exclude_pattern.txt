@@ -6,4 +6,5 @@ winpackagefamily
 winsparkle
 immdev.h
 SystemTraySDK.h
+SystemTraySDK.cpp
 ctffunc.h
