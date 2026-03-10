@@ -3,6 +3,14 @@
 #include "WeaselTSF.h"
 #include <KeyEvent.h>
 #include "CandidateList.h"
+#include <algorithm>
+#include <fstream>
+#include <map>
+#include <set>
+#include <sstream>
+#include <string>
+#include <filesystem>
+namespace fs = std::filesystem;
 
 static weasel::KeyEvent prevKeyEvent;
 static BOOL prevfEaten = FALSE;
@@ -63,14 +71,369 @@ void WeaselTSF::_ProcessKeyEvent(WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
 }
 
 STDAPI WeaselTSF::OnSetFocus(BOOL fForeground) {
-  if (fForeground)
-    m_client.FocusIn();
-  else {
+  if (fForeground) {
+    m_client.FocusIn();  // keep IPC semantics; decision is made locally
+    BOOL toOpenClose = _isToOpenClose;
+    BOOL keyboardOpen = _IsKeyboardOpen();
+    bool shouldDisable = _ShouldDisableImeForForegroundApp();
+    if (shouldDisable && toOpenClose && keyboardOpen) {
+      _SetKeyboardOpen(FALSE);
+    }
+  } else {
     m_client.FocusOut();
     _AbortComposition();
   }
 
   return S_OK;
+}
+
+namespace {
+fs::path GetWeaselUserDataPath() {
+  WCHAR path[MAX_PATH] = {0};
+  HKEY hKey = nullptr;
+  if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Rime\\Weasel", 0, KEY_READ,
+                    &hKey) == ERROR_SUCCESS) {
+    DWORD type = 0;
+    DWORD len = sizeof(path);
+    if (RegQueryValueExW(hKey, L"RimeUserDir", nullptr, &type, (LPBYTE)path,
+                         &len) == ERROR_SUCCESS &&
+        type == REG_SZ && path[0]) {
+      RegCloseKey(hKey);
+      return fs::path(path);
+    }
+    RegCloseKey(hKey);
+  }
+  ExpandEnvironmentStringsW(L"%AppData%\\Rime", path, _countof(path));
+  return fs::path(path);
+}
+
+// Log one line to Rime user dir weasel_disable_ime.log for debugging
+// disable_ime / window-title based exceptions.
+static void AppendDisableImeLog(const std::wstring& line) {
+  (void)line;
+  // Logging disabled; re-enable by writing to weasel_disable_ime.log here.
+}
+
+// Max last-write time of weasel.yaml / weasel.custom.yaml; 0 if neither exists.
+static ULONGLONG GetDisableImeConfigMtime() {
+  fs::path user_dir = GetWeaselUserDataPath();
+  ULONGLONG max_time = 0;
+  for (const wchar_t* name : {L"weasel.yaml", L"weasel.custom.yaml"}) {
+    HANDLE h = CreateFileW((user_dir / name).c_str(), FILE_READ_ATTRIBUTES,
+                           FILE_SHARE_READ, NULL, OPEN_EXISTING,
+                           FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h != INVALID_HANDLE_VALUE) {
+      FILETIME ft = {0};
+      if (GetFileTime(h, NULL, NULL, &ft)) {
+        ULARGE_INTEGER u;
+        u.LowPart = ft.dwLowDateTime;
+        u.HighPart = ft.dwHighDateTime;
+        if (u.QuadPart > max_time)
+          max_time = u.QuadPart;
+      }
+      CloseHandle(h);
+    }
+  }
+  return max_time;
+}
+
+static std::wstring Utf8ToWLower(const std::string& s) {
+  if (s.empty())
+    return L"";
+  int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), NULL, 0);
+  if (n <= 0)
+    return L"";
+  std::wstring out(n, 0);
+  MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), &out[0], n);
+  std::transform(out.begin(), out.end(), out.begin(), ::towlower);
+  return out;
+}
+
+static std::wstring Utf8ToW(const std::string& s) {
+  if (s.empty())
+    return L"";
+  int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), NULL, 0);
+  if (n <= 0)
+    return L"";
+  std::wstring out(n, 0);
+  MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), &out[0], n);
+  return out;
+}
+
+struct DisableImeRule {
+  bool disable_ime = false;
+  std::wstring except_window_title_contains;
+};
+
+// Extract value after colon from "key: value", trim and strip surrounding
+// quotes.
+static std::string GetYamlValueAfterColon(const std::string& trimmed) {
+  size_t colon = trimmed.find(':');
+  if (colon == std::string::npos)
+    return "";
+  size_t v = colon + 1;
+  while (v < trimmed.size() && (trimmed[v] == ' ' || trimmed[v] == '\t'))
+    v++;
+  std::string val = trimmed.substr(v);
+  while (!val.empty() &&
+         (val.back() == ' ' || val.back() == '\t' || val.back() == '\r'))
+    val.pop_back();
+  if (val.size() >= 2 && ((val.front() == '"' && val.back() == '"') ||
+                          (val.front() == '\'' && val.back() == '\'')))
+    val = val.substr(1, val.size() - 2);
+  return val;
+}
+
+// Parse patch-style: "  app_options/conhost.exe/disable_ime: true"
+// or value on next line: "  app_options/.../disable_ime:\n    true"
+static void ParsePatchAppOptionsDisableIme(
+    const std::string& content,
+    std::map<std::wstring, DisableImeRule>& app_rules) {
+  const std::string prefix = "app_options/";
+  const std::string suffix = "/disable_ime:";
+  std::istringstream is(content);
+  std::string line;
+  while (std::getline(is, line)) {
+    size_t pos = line.find(prefix);
+    if (pos == std::string::npos)
+      continue;
+    pos += prefix.size();
+    size_t end = line.find(suffix, pos);
+    if (end == std::string::npos)
+      continue;
+    std::string app(line.substr(pos, end - pos));
+    size_t val_start = end + suffix.size();
+    while (val_start < line.size() &&
+           (line[val_start] == ' ' || line[val_start] == '\t'))
+      val_start++;
+    bool val = (line.find("true", val_start) != std::string::npos);
+    if (!val && std::getline(is, line)) {
+      size_t s = line.find_first_not_of(" \t");
+      if (s != std::string::npos && line.find("true", s) != std::string::npos)
+        val = true;
+    }
+    std::wstring key = Utf8ToWLower(app);
+    if (!key.empty() && val)
+      app_rules[key] = {true, L""};
+  }
+}
+
+// Parse "app_options/xxx.exe": key style; disable_ime and
+// disable_ime_except_window_title_contains may follow on next lines.
+static void ParseQuotedAppOptionsKeys(
+    const std::string& content,
+    std::map<std::wstring, DisableImeRule>& app_rules) {
+  const std::string prefix = "app_options/";
+  std::istringstream is(content);
+  std::string line;
+  std::string current_app;
+  while (std::getline(is, line)) {
+    size_t start = line.find_first_not_of(" \t");
+    if (start == std::string::npos)
+      continue;
+    std::string trimmed = line.substr(start);
+    if (trimmed.empty() || trimmed[0] == '#')
+      continue;
+    size_t pos = trimmed.find(prefix);
+    if (pos != std::string::npos) {
+      size_t name_start = pos + prefix.size();
+      size_t colon = trimmed.find(':', name_start);
+      if (colon != std::string::npos) {
+        std::string name = trimmed.substr(name_start, colon - name_start);
+        size_t b = name.find_first_not_of(" \t");
+        size_t e = name.find_last_not_of(" \t");
+        if (b != std::string::npos) {
+          size_t len = (e != std::string::npos ? e + 1 : name.size()) - b;
+          name = name.substr(b, len);
+        }
+        while (!name.empty() && name.back() == '"')
+          name.pop_back();
+        while (name.size() >= 2 && name.front() == '"')
+          name = name.substr(1);
+        if (!name.empty())
+          current_app = name;
+      }
+      continue;
+    }
+    size_t colon = trimmed.find(':');
+    if (colon == std::string::npos || current_app.empty())
+      continue;
+    std::string key = trimmed.substr(0, colon);
+    size_t key_end = key.find_last_not_of(" \t");
+    if (key_end != std::string::npos)
+      key = key.substr(0, key_end + 1);
+    std::wstring wapp = Utf8ToWLower(current_app);
+    if (wapp.empty())
+      continue;
+    if (key == "disable_ime") {
+      bool val = (trimmed.find("true", colon + 1) != std::string::npos);
+      if (val)
+        app_rules[wapp].disable_ime = true;
+    } else if (key == "disable_ime_except_window_title_contains") {
+      std::string raw = GetYamlValueAfterColon(trimmed);
+      if (!raw.empty())
+        app_rules[wapp].except_window_title_contains = Utf8ToW(raw);
+    }
+  }
+}
+
+// Parse app_options block (any indent >= 2 under app_options:) and patch-style.
+void ParseAppOptionsDisableIme(
+    const std::string& content,
+    std::map<std::wstring, DisableImeRule>& app_rules) {
+  ParsePatchAppOptionsDisableIme(content, app_rules);
+  ParseQuotedAppOptionsKeys(content, app_rules);
+  std::istringstream is(content);
+  std::string line;
+  bool in_app_options = false;
+  size_t options_indent = 0;  // indent of "app_options:"
+  std::string current_app;
+  while (std::getline(is, line)) {
+    size_t start = line.find_first_not_of(" \t");
+    if (start == std::string::npos)
+      continue;
+    std::string trimmed = line.substr(start);
+    if (trimmed.empty() || trimmed[0] == '#')
+      continue;
+    // Accept "app_options:" with optional trailing space/cr
+    bool is_app_options_key = trimmed.size() >= 12 &&
+                              trimmed.compare(0, 12, "app_options:") == 0 &&
+                              (trimmed.size() == 12 || trimmed[12] == ' ' ||
+                               trimmed[12] == '\t' || trimmed[12] == '\r');
+    if (is_app_options_key) {
+      in_app_options = true;
+      options_indent = start;
+      current_app.clear();
+      continue;
+    }
+    if (!in_app_options)
+      continue;
+    if (start <= options_indent) {
+      in_app_options = false;
+      continue;
+    }
+    size_t colon = trimmed.find(':');
+    if (colon == std::string::npos)
+      continue;
+    std::string key = trimmed.substr(0, colon);
+    size_t key_end = key.find_last_not_of(" \t");
+    if (key_end != std::string::npos)
+      key = key.substr(0, key_end + 1);
+    if (key == "disable_ime") {
+      bool val = (trimmed.find("true", colon + 1) != std::string::npos);
+      if (!current_app.empty()) {
+        std::wstring wapp = Utf8ToWLower(current_app);
+        if (!wapp.empty() && val)
+          app_rules[wapp].disable_ime = true;
+      }
+    } else if (key == "disable_ime_except_window_title_contains") {
+      std::string raw = GetYamlValueAfterColon(trimmed);
+      if (!current_app.empty() && !raw.empty()) {
+        std::wstring wapp = Utf8ToWLower(current_app);
+        if (!wapp.empty())
+          app_rules[wapp].except_window_title_contains = Utf8ToW(raw);
+      }
+    } else if (start == options_indent + 2) {
+      // First level under app_options: this line is an app name (e.g. cmd.exe)
+      current_app = key;
+    }
+  }
+}
+
+void LoadDisableImeRules(std::map<std::wstring, DisableImeRule>& out) {
+  out.clear();
+  fs::path user_dir = GetWeaselUserDataPath();
+  auto read_file = [](const fs::path& p) -> std::string {
+    std::ifstream f(p, std::ios::binary);
+    if (!f)
+      return "";
+    std::ostringstream os;
+    os << f.rdbuf();
+    return os.str();
+  };
+  std::string yaml_base = read_file(user_dir / "weasel.yaml");
+  std::string yaml_custom = read_file(user_dir / "weasel.custom.yaml");
+  ParseAppOptionsDisableIme(yaml_base, out);
+  ParseAppOptionsDisableIme(yaml_custom, out);
+}
+
+// Cache for disable_ime rules; refreshed when config file mtime changes.
+static std::map<std::wstring, DisableImeRule> s_disableImeRules;
+static ULONGLONG s_disableImeRulesMtime = 0;
+
+const std::map<std::wstring, DisableImeRule>& GetCachedDisableImeRules() {
+  ULONGLONG mtime = GetDisableImeConfigMtime();
+  if (mtime != s_disableImeRulesMtime) {
+    LoadDisableImeRules(s_disableImeRules);
+    s_disableImeRulesMtime = mtime;
+  }
+  return s_disableImeRules;
+}
+}  // namespace
+
+bool WeaselTSF::_ShouldDisableImeForForegroundApp(HWND hwndFromDoc) {
+  HWND hwnd = (hwndFromDoc != NULL) ? hwndFromDoc : GetForegroundWindow();
+  if (!hwnd)
+    return false;
+
+  DWORD pid = 0;
+  GetWindowThreadProcessId(hwnd, &pid);
+  if (!pid)
+    return false;
+
+  const DWORD kAccess = PROCESS_QUERY_INFORMATION | PROCESS_VM_READ;
+  HANDLE hProcess = OpenProcess(kAccess, FALSE, pid);
+  if (!hProcess)
+    return false;
+
+  WCHAR path[MAX_PATH] = {0};
+  DWORD size = _countof(path);
+  BOOL ok = QueryFullProcessImageNameW(hProcess, 0, path, &size);
+  if (!ok || !path[0]) {
+    CloseHandle(hProcess);
+    return false;
+  }
+
+  std::wstring exe(path);
+  size_t pos = exe.find_last_of(L"\\/");
+  if (pos != std::wstring::npos && pos + 1 < exe.size())
+    exe = exe.substr(pos + 1);
+  std::wstring exeLower = exe;
+  std::transform(exeLower.begin(), exeLower.end(), exeLower.begin(),
+                 ::towlower);
+
+  const auto& rules = GetCachedDisableImeRules();
+  auto it = rules.find(exeLower);
+  if (it == rules.end()) {
+    CloseHandle(hProcess);
+    return false;
+  }
+  if (!it->second.disable_ime) {
+    CloseHandle(hProcess);
+    return false;
+  }
+
+  const DisableImeRule& rule = it->second;
+  // 窗口特征例外：如 Zmail，
+  //    disable_ime_except_window_title_contains: "Zmail"
+  if (!rule.except_window_title_contains.empty()) {
+    wchar_t title[256] = {0};
+    GetWindowTextW(hwnd, title, _countof(title));
+    std::wstring title_lower = title;
+    std::transform(title_lower.begin(), title_lower.end(), title_lower.begin(),
+                   ::towlower);
+    std::wstring needle = rule.except_window_title_contains;
+    std::transform(needle.begin(), needle.end(), needle.begin(), ::towlower);
+    bool title_matched =
+        (!needle.empty() && title_lower.find(needle) != std::wstring::npos);
+    if (title_matched) {
+      CloseHandle(hProcess);
+      return false;
+    }
+  }
+
+  CloseHandle(hProcess);
+  return true;
 }
 
 /* Some apps sends strange OnTestKeyDown/OnKeyDown combinations:

@@ -1,4 +1,4 @@
-﻿#include "stdafx.h"
+#include "stdafx.h"
 
 #include <WeaselIPCData.h>
 #include <thread>
@@ -31,6 +31,8 @@ WeaselTSF::WeaselTSF() {
   _fTestKeyUpPending = FALSE;
 
   _fCUASWorkaroundTested = _fCUASWorkaroundEnabled = FALSE;
+  _hwndDisableImeDefer = NULL;
+  _disableImeClosedByRule = FALSE;
 
   _cand = new CCandidateList(this);
 
@@ -99,6 +101,7 @@ STDAPI WeaselTSF::Deactivate() {
   m_client.EndSession();
 
   _InitTextEditSink(com_ptr<ITfDocumentMgr>());
+  _UninitDisableImeDefer();
 
   _UninitThreadMgrEventSink();
 
@@ -277,5 +280,73 @@ bool WeaselTSF::_EnsureServerConnected() {
     return (m_client.Echo() != 0);
   } else {
     return true;
+  }
+}
+
+namespace {
+const UINT_PTR DISABLE_IME_DEFER_TIMER_ID = 1;
+// 尽量压缩延迟关闭 IME 的感知时间，仅用于文档窗口句柄暂不可用的兜底场景。
+const UINT DISABLE_IME_DEFER_MS = 120;
+const wchar_t DISABLE_IME_DEFER_CLASS[] = L"WeaselTSF_DisableImeDefer";
+}  // namespace
+
+LRESULT CALLBACK WeaselTSF::_DisableImeDeferWndProc(HWND hwnd,
+                                                    UINT msg,
+                                                    WPARAM wParam,
+                                                    LPARAM lParam) {
+  WeaselTSF* pThis =
+      reinterpret_cast<WeaselTSF*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
+  if (msg == WM_CREATE && lParam != 0) {
+    void* lp = reinterpret_cast<CREATESTRUCT*>(lParam)->lpCreateParams;
+    SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(lp));
+    return 0;
+  }
+  if (msg == WM_TIMER && wParam == DISABLE_IME_DEFER_TIMER_ID &&
+      pThis != NULL) {
+    KillTimer(hwnd, DISABLE_IME_DEFER_TIMER_ID);
+    pThis->_OnDisableImeDeferTimer();
+    return 0;
+  }
+  return DefWindowProc(hwnd, msg, wParam, lParam);
+}
+
+void WeaselTSF::_ScheduleDisableImeDeferCheck() {
+  if (_hwndDisableImeDefer == NULL) {
+    static ATOM reg = 0;
+    if (reg == 0) {
+      WNDCLASSEXW wc = {0};
+      wc.cbSize = sizeof(wc);
+      wc.lpfnWndProc = _DisableImeDeferWndProc;
+      wc.hInstance = GetModuleHandle(NULL);
+      wc.lpszClassName = DISABLE_IME_DEFER_CLASS;
+      reg = RegisterClassExW(&wc);
+      if (reg == 0)
+        return;
+    }
+    _hwndDisableImeDefer =
+        CreateWindowExW(0, DISABLE_IME_DEFER_CLASS, NULL, 0, 0, 0, 0, 0,
+                        HWND_MESSAGE, NULL, GetModuleHandle(NULL), this);
+    if (_hwndDisableImeDefer == NULL)
+      return;
+  }
+  SetTimer(_hwndDisableImeDefer, DISABLE_IME_DEFER_TIMER_ID,
+           DISABLE_IME_DEFER_MS, NULL);
+}
+
+void WeaselTSF::_OnDisableImeDeferTimer() {
+  BOOL toOpenClose = _isToOpenClose;
+  BOOL keyboardOpen = _IsKeyboardOpen();
+  bool shouldDisable = _ShouldDisableImeForForegroundApp(NULL);
+  if (shouldDisable && toOpenClose && keyboardOpen) {
+    _SetKeyboardOpen(FALSE);
+    _disableImeClosedByRule = TRUE;
+  }
+}
+
+void WeaselTSF::_UninitDisableImeDefer() {
+  if (_hwndDisableImeDefer != NULL) {
+    KillTimer(_hwndDisableImeDefer, DISABLE_IME_DEFER_TIMER_ID);
+    DestroyWindow(_hwndDisableImeDefer);
+    _hwndDisableImeDefer = NULL;
   }
 }

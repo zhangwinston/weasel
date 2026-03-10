@@ -8,6 +8,14 @@ app_options:
     ascii_mode: true
   conhost.exe:
     ascii_mode: true
+  # Auto-close IME when focusing these apps (requires ToggleImeOnOpenClose).
+  # For console windows (cmd/PowerShell) the reported app is conhost.exe.
+  # conhost.exe:
+  #   disable_ime: true
+  # Chrome: disable IME for normal Chrome, but not for a specific PWA (e.g. Zmail):
+  # chrome_proxy.exe:
+  #   disable_ime: true
+  #   disable_ime_except_cmdline_contains: "--app-id=fejmkofbleafhljbnnocihdfgikiedjb"
   firefox.exe:
     inline_preedit: true # workaround for #946
 

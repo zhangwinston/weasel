@@ -1,7 +1,6 @@
 // dllmain.cpp : Defines the entry point for the DLL application.
 #include "stdafx.h"
 #include "Globals.h"
-#include <stdio.h>
 #include <Windows.h>
 #include <DbgHelp.h>
 #include <tchar.h>
@@ -59,12 +58,13 @@ LONG WINAPI _UnhandledExceptionFilter(EXCEPTION_POINTERS* pExceptionPointers) {
 
 BOOL WINAPI DllMain(HINSTANCE hInstance, DWORD dwReason, LPVOID pvReserved) {
   switch (dwReason) {
-    case DLL_PROCESS_ATTACH:
+    case DLL_PROCESS_ATTACH: {
       g_hInst = hInstance;
       SetUnhandledExceptionFilter(_UnhandledExceptionFilter);
       if (!InitializeCriticalSectionAndSpinCount(&g_cs, 0))
         return FALSE;
       break;
+    }
     case DLL_PROCESS_DETACH:
       DeleteCriticalSection(&g_cs);
       break;

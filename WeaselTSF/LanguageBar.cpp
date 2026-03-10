@@ -1,4 +1,4 @@
-﻿#include "stdafx.h"
+#include "stdafx.h"
 #include <resource.h>
 #include <thread>
 #include <shellapi.h>
@@ -362,6 +362,20 @@ HWND WeaselTSF::_GetFocusedContextWindow() {
       hwnd = hwndForeground;
   }
 
+  return hwnd;
+}
+
+HWND WeaselTSF::_GetWindowFromDocumentMgr(ITfDocumentMgr* pDocMgr) {
+  HWND hwnd = NULL;
+  if (!pDocMgr)
+    return hwnd;
+  com_ptr<ITfContext> pContext;
+  if (pDocMgr->GetTop(&pContext) != S_OK || !pContext)
+    return hwnd;
+  com_ptr<ITfContextView> pContextView;
+  if (pContext->GetActiveView(&pContextView) != S_OK || !pContextView)
+    return hwnd;
+  pContextView->GetWnd(&hwnd);
   return hwnd;
 }
 

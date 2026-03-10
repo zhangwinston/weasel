@@ -125,6 +125,7 @@ class WeaselTSF : public ITfTextInputProcessorEx,
 
   /* Language bar */
   HWND _GetFocusedContextWindow();
+  HWND _GetWindowFromDocumentMgr(ITfDocumentMgr* pDocMgr);
   void _HandleLangBarMenuSelect(UINT wID);
 
   /* IPC */
@@ -153,6 +154,15 @@ class WeaselTSF : public ITfTextInputProcessorEx,
                         bool* const scroll_next);
 
  private:
+  static LRESULT CALLBACK _DisableImeDeferWndProc(HWND hwnd,
+                                                  UINT msg,
+                                                  WPARAM wParam,
+                                                  LPARAM lParam);
+  bool _ShouldDisableImeForForegroundApp(HWND hwndFromDoc = NULL);
+  void _ScheduleDisableImeDeferCheck();
+  void _OnDisableImeDeferTimer();
+  void _UninitDisableImeDefer();
+
   /* ui callback functions private */
   void _SelectCandidateOnCurrentPage(const size_t index);
   void _HandleMouseHoverEvent(const size_t index);
@@ -221,6 +231,9 @@ class WeaselTSF : public ITfTextInputProcessorEx,
   /* CUAS Candidate Window Position Workaround */
   BOOL _fCUASWorkaroundTested, _fCUASWorkaroundEnabled;
 
+  /* Deferred disable_ime check when doc window not ready. */
+  HWND _hwndDisableImeDefer;
+
   /* Weasel Related */
   weasel::Client m_client;
   DWORD _activateFlags;
@@ -233,4 +246,7 @@ class WeaselTSF : public ITfTextInputProcessorEx,
   BOOL _async_edit = false;
   BOOL _committed = false;
   BOOL _isToOpenClose = false;
+  // Whether IME was closed by disable_ime logic and should be restored
+  // when switching to a non-blacklisted app.
+  BOOL _disableImeClosedByRule = FALSE;
 };

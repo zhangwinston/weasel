@@ -1,4 +1,4 @@
-﻿#include "stdafx.h"
+#include "stdafx.h"
 #include "WeaselServerImpl.h"
 #include <mutex>
 #include <Windows.h>
@@ -237,8 +237,7 @@ DWORD ServerImpl::OnFocusIn(WEASEL_IPC_COMMAND uMsg,
                             DWORD lParam) {
   if (!m_pRequestHandler)
     return 0;
-  m_pRequestHandler->FocusIn(wParam, lParam);
-  return 0;
+  return m_pRequestHandler->FocusIn(wParam, lParam);
 }
 
 DWORD ServerImpl::OnFocusOut(WEASEL_IPC_COMMAND uMsg,
@@ -246,8 +245,7 @@ DWORD ServerImpl::OnFocusOut(WEASEL_IPC_COMMAND uMsg,
                              DWORD lParam) {
   if (!m_pRequestHandler)
     return 0;
-  m_pRequestHandler->FocusOut(wParam, lParam);
-  return 0;
+  return m_pRequestHandler->FocusOut(wParam, lParam);
 }
 
 DWORD ServerImpl::OnUpdateInputPosition(WEASEL_IPC_COMMAND uMsg,

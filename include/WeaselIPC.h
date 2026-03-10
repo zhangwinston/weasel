@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <WeaselIPCData.h>
 #include <WeaselUtility.h>
 #include <windows.h>
@@ -74,8 +74,9 @@ struct RequestHandler {
   virtual bool ChangePage(bool backward, DWORD session_id, EatLine eat) {
     return false;
   }
-  virtual void FocusIn(DWORD param, DWORD session_id) {}
-  virtual void FocusOut(DWORD param, DWORD session_id) {}
+  // Return value can carry per-session flags to client.
+  virtual DWORD FocusIn(DWORD param, DWORD session_id) { return 0; }
+  virtual DWORD FocusOut(DWORD param, DWORD session_id) { return 0; }
   virtual void UpdateInputPosition(RECT const& rc, DWORD session_id) {}
   virtual void StartMaintenance() {}
   virtual void EndMaintenance() {}
@@ -135,9 +136,9 @@ class Client {
   // 更新输入位置
   void UpdateInputPosition(RECT const& rc);
   // 输入窗口获得焦点
-  void FocusIn();
+  DWORD FocusIn();
   // 输入窗口失去焦点
-  void FocusOut();
+  DWORD FocusOut();
   // 托盤菜單
   void TrayCommand(UINT menuId);
   // 读取server返回的数据

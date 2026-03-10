@@ -24,6 +24,27 @@ STDAPI WeaselTSF::OnSetFocus(ITfDocumentMgr* pDocMgrFocus,
     }
   }
 
+  // 文档焦点切换时按 app_options/disable_ime 判定是否自动关闭 IME；优先用文档
+  // 窗口即时判定，若 IME 仍打开则调度延迟检查（新开进程时用
+  // GetForegroundWindow 纠正）。
+  HWND hwndFromDoc = _GetWindowFromDocumentMgr(pDocMgrFocus);
+  BOOL toOpenClose = _isToOpenClose;
+  BOOL keyboardOpen = _IsKeyboardOpen();
+  bool shouldDisable = _ShouldDisableImeForForegroundApp(hwndFromDoc);
+  if (shouldDisable && toOpenClose && keyboardOpen) {
+    _SetKeyboardOpen(FALSE);
+    _disableImeClosedByRule = TRUE;
+  } else {
+    // 如果之前因黑名单规则关闭了 IME，而当前前台应用不在黑名单中，则恢复 IME。
+    if (!shouldDisable && toOpenClose && !keyboardOpen &&
+        _disableImeClosedByRule) {
+      _SetKeyboardOpen(TRUE);
+      _disableImeClosedByRule = FALSE;
+    } else if (keyboardOpen) {
+      _ScheduleDisableImeDeferCheck();
+    }
+  }
+
   return S_OK;
 }
 
