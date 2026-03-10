@@ -364,6 +364,20 @@ HWND WeaselTSF::_GetFocusedContextWindow() {
   return hwnd;
 }
 
+HWND WeaselTSF::_GetWindowFromDocumentMgr(ITfDocumentMgr* pDocMgr) {
+  HWND hwnd = NULL;
+  if (!pDocMgr)
+    return hwnd;
+  com_ptr<ITfContext> pContext;
+  if (pDocMgr->GetTop(&pContext) != S_OK || !pContext)
+    return hwnd;
+  com_ptr<ITfContextView> pContextView;
+  if (pContext->GetActiveView(&pContextView) != S_OK || !pContextView)
+    return hwnd;
+  pContextView->GetWnd(&hwnd);
+  return hwnd;
+}
+
 BOOL WeaselTSF::_InitLanguageBar() {
   com_ptr<ITfLangBarItemMgr> pLangBarItemMgr;
   BOOL fRet = FALSE;

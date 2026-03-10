@@ -346,20 +346,58 @@ bool RimeWithWeaselHandler::ChangePage(bool backward,
   return res;
 }
 
-void RimeWithWeaselHandler::FocusIn(DWORD client_caps, WeaselSessionId ipc_id) {
+DWORD RimeWithWeaselHandler::FocusIn(DWORD client_caps,
+                                     WeaselSessionId ipc_id) {
   DLOG(INFO) << "Focus in: ipc_id = " << ipc_id
              << ", client_caps = " << client_caps;
   if (m_disabled)
-    return;
+    return 0;
   _UpdateUI(ipc_id);
   m_active_session = ipc_id;
+  // Return a flag to client to request closing IME when the focused app is in
+  // blacklist (configured via weasel.yaml -> app_options -> <app> ->
+  // disable_ime: true).
+  SessionStatus& session_status = get_session_status(ipc_id);
+  RimeSessionId session_id = session_status.session_id;
+  static char _app_name[50] = {0};
+  _app_name[0] = '\0';
+  rime_api->get_property(session_id, "client_app", _app_name,
+                         sizeof(_app_name) - 1);
+  std::string app_name(_app_name);
+  DWORD disable_ime_flag = 0;
+  if (app_name.empty()) {
+    LOG(INFO) << "[disable_ime] FocusIn ipc_id=" << ipc_id
+              << ": client_app is empty (set on first session create), skip.";
+  } else {
+    auto it = m_app_options.find(app_name);
+    if (it == m_app_options.end()) {
+      LOG(INFO) << "[disable_ime] FocusIn ipc_id=" << ipc_id << " app=\""
+                << app_name
+                << "\": not in app_options, no auto-close. (Tip: for console "
+                   "windows the app name is often conhost.exe, not cmd.exe)";
+    } else {
+      AppOptions& options(m_app_options[it->first]);
+      auto opt = options.find("disable_ime");
+      if (opt != options.end() && opt->second) {
+        disable_ime_flag = 1;
+        LOG(INFO) << "[disable_ime] FocusIn ipc_id=" << ipc_id << " app=\""
+                  << app_name << "\": disable_ime=true, return 1.";
+      } else {
+        LOG(INFO) << "[disable_ime] FocusIn ipc_id=" << ipc_id << " app=\""
+                  << app_name
+                  << "\": in app_options but disable_ime not true, return 0.";
+      }
+    }
+  }
+  return disable_ime_flag;
 }
 
-void RimeWithWeaselHandler::FocusOut(DWORD param, WeaselSessionId ipc_id) {
+DWORD RimeWithWeaselHandler::FocusOut(DWORD param, WeaselSessionId ipc_id) {
   DLOG(INFO) << "Focus out: ipc_id = " << ipc_id;
   if (m_ui)
     m_ui->Hide();
   m_active_session = 0;
+  return 0;
 }
 
 void RimeWithWeaselHandler::UpdateInputPosition(RECT const& rc,
