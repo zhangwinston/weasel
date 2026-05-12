@@ -23,13 +23,30 @@ typedef std::map<std::string, AppOptions, CaseInsensitiveCompare>
     AppOptionsByAppName;
 
 struct SessionStatus {
-  SessionStatus() : style(weasel::UIStyle()), __synced(false), session_id(0) {
+  enum OpenStatusIconState {
+    OPEN_STATUS_ICON_IDLE,
+    OPEN_STATUS_ICON_WAIT_FOR_POSITION,
+    OPEN_STATUS_ICON_READY_TO_SHOW,
+  };
+
+  SessionStatus()
+      : style(weasel::UIStyle()),
+        __synced(false),
+        session_id(0),
+        ime_open_state(weasel::IME_OPEN),
+        open_status_icon_state(OPEN_STATUS_ICON_IDLE),
+        has_input_pos(false),
+        last_input_pos{} {
     RIME_STRUCT(RimeStatus, status);
   }
   weasel::UIStyle style;
   RimeStatus status;
   bool __synced;
   RimeSessionId session_id;
+  weasel::ImeOpenState ime_open_state;
+  OpenStatusIconState open_status_icon_state;
+  bool has_input_pos;
+  RECT last_input_pos;
 };
 typedef std::map<DWORD, SessionStatus> SessionStatusMap;
 typedef DWORD WeaselSessionId;
@@ -55,6 +72,8 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   virtual bool ChangePage(bool backward, WeaselSessionId ipc_id, EatLine eat);
   virtual DWORD FocusIn(DWORD param, WeaselSessionId ipc_id);
   virtual DWORD FocusOut(DWORD param, WeaselSessionId ipc_id);
+  virtual void SetImeOpenState(WeaselSessionId ipc_id,
+                               weasel::ImeOpenState state);
   virtual void UpdateInputPosition(RECT const& rc, WeaselSessionId ipc_id);
   virtual void StartMaintenance();
   virtual void EndMaintenance();
@@ -84,6 +103,11 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
                   weasel::Context& ctx);
   void _GetContext(weasel::Context& ctx, RimeSessionId session_id);
   void _UpdateShowNotifications(RimeConfig* config, bool initialize = false);
+  bool _ShouldShowOpenStatusIcon(const SessionStatus& session_status,
+                                 const weasel::Context& ctx,
+                                 const weasel::Status& status) const;
+  void _ShowOpenStatusIcon(const SessionStatus& session_status);
+  void _ResetOpenStatusIconState(SessionStatus& session_status);
 
   void _UpdateInlinePreeditStatus(WeaselSessionId ipc_id);
 
@@ -123,4 +147,5 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   int m_show_notifications_time;
   DWORD m_pid;
   WeaselSessionId m_last_position_session;  // only show notification when match
+  bool m_suppressStatusIconForNextPaint;
 };

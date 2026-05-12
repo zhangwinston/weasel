@@ -198,7 +198,19 @@ STDMETHODIMP CCandidateList::FinalizeExactCompositionString() {
   return E_NOTIMPL;
 }
 
+void CCandidateList::HidePanelForClosedKeyboard() {
+  Show(FALSE);
+  if (_ui)
+    _ui->Hide();
+}
+
 void CCandidateList::UpdateUI(const Context& ctx, const Status& status) {
+  if (!_tsf->ImePanelPaintEnabled()) {
+    Show(FALSE);
+    if (_ui)
+      _ui->Hide();
+    return;
+  }
   if (_ui->style().inline_preedit) {
     _ui->style().client_caps |= weasel::INLINE_PREEDIT_CAPABLE;
   } else {
@@ -350,7 +362,13 @@ void CCandidateList::_MakeUIWindow() {
 }
 
 void WeaselTSF::_UpdateUI(const Context& ctx, const Status& status) {
-  _cand->UpdateUI(ctx, status);
+  Status s = status;
+  s.ime_open_state = m_imeOpenState;
+  if (_suppressStatusIconForNextPaint) {
+    s.suppress_status_icon = true;
+    _suppressStatusIconForNextPaint = false;
+  }
+  _cand->UpdateUI(ctx, s);
 }
 
 void WeaselTSF::_StartUI() {

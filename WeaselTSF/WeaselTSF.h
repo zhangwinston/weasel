@@ -105,7 +105,17 @@ class WeaselTSF : public ITfTextInputProcessorEx,
   /* Compartments */
   BOOL _IsKeyboardDisabled();
   BOOL _IsKeyboardOpen();
+  // Candidate window/status icon painting is only allowed when the unified
+  // IME state is IME_OPEN. A close request may first enter IME_CLOSING before
+  // GUID_COMPARTMENT_KEYBOARD_OPENCLOSE lands, which suppresses any final
+  // icon-only repaint during that transition window.
+  BOOL ImePanelPaintEnabled() const {
+    return m_imeOpenState == weasel::IME_OPEN;
+  }
   HRESULT _SetKeyboardOpen(BOOL fOpen);
+  // Local high-level open/close request. Final OPEN/CLOSED is still latched by
+  // the compartment callback; close requests only pre-enter IME_CLOSING.
+  HRESULT _RequestImeOpenStateChange(BOOL fOpen);
   HRESULT _GetCompartmentDWORD(DWORD& value, const GUID guid);
   HRESULT _SetCompartmentDWORD(const DWORD& value, const GUID guid);
 
@@ -120,6 +130,7 @@ class WeaselTSF : public ITfTextInputProcessorEx,
   void _SetComposition(com_ptr<ITfComposition> pComposition);
   void _SetCompositionPosition(const RECT& rc);
   BOOL _UpdateCompositionWindow(com_ptr<ITfContext> pContext);
+  BOOL _UpdateCurrentInputPosition();
   void _FinalizeComposition();
   void _AbortComposition(bool clear = true);
 
@@ -180,6 +191,11 @@ class WeaselTSF : public ITfTextInputProcessorEx,
   BOOL _InitKeyEventSink();
   void _UninitKeyEventSink();
   void _ProcessKeyEvent(WPARAM wParam, LPARAM lParam, BOOL* pfEaten);
+  // Detect the local toggle hotkey only in the "currently open, about to
+  // close" case; this is a predictor for the close transition, not the source
+  // of truth for final IME state.
+  bool _MatchesImeCloseHotkey(WPARAM wParam, LPARAM lParam);
+  void _EnterImeClosingState();
 
   BOOL _InitPreservedKey();
   void _UninitPreservedKey();
@@ -249,4 +265,9 @@ class WeaselTSF : public ITfTextInputProcessorEx,
   // Whether IME was closed by disable_ime logic and should be restored
   // when switching to a non-blacklisted app.
   BOOL _disableImeClosedByRule = FALSE;
+
+  void _ClearCompositionForUi();
+  void _SetImeOpenState(weasel::ImeOpenState state);
+  bool _suppressStatusIconForNextPaint = false;
+  weasel::ImeOpenState m_imeOpenState = weasel::IME_OPEN;
 };

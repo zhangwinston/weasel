@@ -229,6 +229,18 @@ BOOL WeaselTSF::_UpdateCompositionWindow(com_ptr<ITfContext> pContext) {
   return SUCCEEDED(hr);
 }
 
+BOOL WeaselTSF::_UpdateCurrentInputPosition() {
+  com_ptr<ITfDocumentMgr> pDocMgrFocus;
+  com_ptr<ITfContext> pContext;
+  if (!_pThreadMgr)
+    return FALSE;
+  if (_pThreadMgr->GetFocus(&pDocMgrFocus) != S_OK || !pDocMgrFocus)
+    return FALSE;
+  if (pDocMgrFocus->GetTop(&pContext) != S_OK || !pContext)
+    return FALSE;
+  return _UpdateCompositionWindow(pContext);
+}
+
 void WeaselTSF::_SetCompositionPosition(const RECT& rc) {
   /* Test if rect is valid.
    * If it is invalid during CUAS test, we need to apply CUAS workaround */
@@ -404,7 +416,7 @@ STDAPI WeaselTSF::OnCompositionTerminated(TfEditCookie ecWrite,
 }
 
 void WeaselTSF::_AbortComposition(bool clear) {
-  m_client.ClearComposition();
+  _ClearCompositionForUi();
   if (_IsComposing()) {
     _EndComposition(_pEditSessionContext, clear);
   }

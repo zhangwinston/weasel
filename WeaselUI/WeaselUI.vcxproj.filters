@@ -68,6 +68,9 @@
     <ClInclude Include="..\include\WeaselUI.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\include\WeaselStatusIconPolicy.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="Layout.h">
       <Filter>Header Files</Filter>
     </ClInclude>

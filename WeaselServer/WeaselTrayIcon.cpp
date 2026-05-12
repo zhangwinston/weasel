@@ -48,6 +48,15 @@ void WeaselTrayIcon::Refresh() {
     m_disabled = false;
     return;
   }
+  if (m_status.ime_open_state != weasel::IME_OPEN) {
+    if (m_mode != INITIAL) {
+      RemoveIcon();
+      m_mode = INITIAL;
+    }
+    return;
+  }
+  if (m_status.suppress_status_icon)
+    return;
   WeaselTrayMode mode = m_status.disabled     ? DISABLED
                         : m_status.ascii_mode ? ASCII
                                               : ZHUNG;

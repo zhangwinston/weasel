@@ -77,7 +77,7 @@ STDAPI WeaselTSF::OnSetFocus(BOOL fForeground) {
     BOOL keyboardOpen = _IsKeyboardOpen();
     bool shouldDisable = _ShouldDisableImeForForegroundApp();
     if (shouldDisable && toOpenClose && keyboardOpen) {
-      _SetKeyboardOpen(FALSE);
+      _RequestImeOpenStateChange(FALSE);
     }
   } else {
     m_client.FocusOut();
@@ -88,6 +88,19 @@ STDAPI WeaselTSF::OnSetFocus(BOOL fForeground) {
 }
 
 namespace {
+struct KeyChord {
+  WPARAM vkey;
+  bool ctrl;
+  bool shift;
+  bool alt;
+};
+
+constexpr KeyChord kImeOpenCloseHotkey = {VK_SPACE, true, false, false};
+
+bool IsKeyPressed(const BYTE key_state[256], int vkey) {
+  return (key_state[vkey] & 0x80) != 0;
+}
+
 fs::path GetWeaselUserDataPath() {
   WCHAR path[MAX_PATH] = {0};
   HKEY hKey = nullptr;
@@ -436,6 +449,31 @@ bool WeaselTSF::_ShouldDisableImeForForegroundApp(HWND hwndFromDoc) {
   return true;
 }
 
+bool WeaselTSF::_MatchesImeCloseHotkey(WPARAM wParam, LPARAM lParam) {
+  if (!_isToOpenClose || !_IsKeyboardOpen() ||
+      wParam != kImeOpenCloseHotkey.vkey)
+    return false;
+
+  KeyInfo kinfo(lParam);
+  if (kinfo.isKeyUp)
+    return false;
+
+  BYTE key_state[256] = {0};
+  GetKeyboardState(key_state);
+  return IsKeyPressed(key_state, VK_CONTROL) == kImeOpenCloseHotkey.ctrl &&
+         IsKeyPressed(key_state, VK_SHIFT) == kImeOpenCloseHotkey.shift &&
+         IsKeyPressed(key_state, VK_MENU) == kImeOpenCloseHotkey.alt;
+}
+
+void WeaselTSF::_EnterImeClosingState() {
+  if (!_IsKeyboardOpen())
+    return;
+
+  // Enter IME_CLOSING before the compartment callback lands, so all icon UI is
+  // gated off during the close-request -> compartment-update gap.
+  _SetImeOpenState(weasel::IME_CLOSING);
+}
+
 /* Some apps sends strange OnTestKeyDown/OnKeyDown combinations:
  *  Some sends OnKeyDown() only. (QQ2012)
  *  Some sends multiple OnTestKeyDown() for a single key event. (MS WORD 2010
@@ -455,6 +493,8 @@ STDAPI WeaselTSF::OnTestKeyDown(ITfContext* pContext,
     *pfEaten = TRUE;
     return S_OK;
   }
+  if (_MatchesImeCloseHotkey(wParam, lParam))
+    _EnterImeClosingState();
   _ProcessKeyEvent(wParam, lParam, pfEaten);
   _UpdateComposition(pContext);
   if (*pfEaten)
@@ -471,6 +511,8 @@ STDAPI WeaselTSF::OnKeyDown(ITfContext* pContext,
     _fTestKeyDownPending = FALSE;
     *pfEaten = TRUE;
   } else {
+    if (_MatchesImeCloseHotkey(wParam, lParam))
+      _EnterImeClosingState();
     _ProcessKeyEvent(wParam, lParam, pfEaten);
     _UpdateComposition(pContext);
   }

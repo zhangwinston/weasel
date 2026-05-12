@@ -32,6 +32,7 @@ enum WEASEL_IPC_COMMAND {
   WEASEL_IPC_SELECT_CANDIDATE_ON_CURRENT_PAGE,
   WEASEL_IPC_HIGHLIGHT_CANDIDATE_ON_CURRENT_PAGE,
   WEASEL_IPC_CHANGE_PAGE,
+  WEASEL_IPC_SET_IME_OPEN_STATE,
   WEASEL_IPC_LAST_COMMAND
 };
 
@@ -81,6 +82,7 @@ struct RequestHandler {
   virtual void StartMaintenance() {}
   virtual void EndMaintenance() {}
   virtual void SetOption(DWORD session_id, const std::string& opt, bool val) {}
+  virtual void SetImeOpenState(DWORD session_id, ImeOpenState state) {}
   virtual void UpdateColorTheme(BOOL darkMode) {}
 };
 
@@ -139,6 +141,8 @@ class Client {
   DWORD FocusIn();
   // 输入窗口失去焦点
   DWORD FocusOut();
+  // 同步 TSF 侧 IME 开关状态到服务端 UI/托盘
+  void SetImeOpenState(ImeOpenState state);
   // 托盤菜單
   void TrayCommand(UINT menuId);
   // 读取server返回的数据

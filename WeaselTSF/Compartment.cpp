@@ -242,31 +242,43 @@ void WeaselTSF::_UninitCompartment() {
 }
 
 HRESULT WeaselTSF::_HandleCompartment(REFGUID guidCompartment) {
+  const auto sync_open_state_and_position = [this](BOOL isOpen) {
+    _SetImeOpenState(isOpen ? weasel::IME_OPEN : weasel::IME_CLOSED);
+    if (isOpen)
+      _UpdateCurrentInputPosition();
+  };
+
   if (IsEqualGUID(guidCompartment, GUID_COMPARTMENT_KEYBOARD_OPENCLOSE)) {
     if (_isToOpenClose) {
-      BOOL isOpen = _IsKeyboardOpen();
-      // clear composition when close keyboard
+      const BOOL isOpen = _IsKeyboardOpen();
+      sync_open_state_and_position(isOpen);
+      // Hide before ClearComposition so no layered-window paint commits while
+      // server may already report !composing + empty context (icon-only flash).
+      if (!isOpen)
+        _cand->HidePanelForClosedKeyboard();
       if (!isOpen && _pEditSessionContext) {
-        m_client.ClearComposition();
+        _ClearCompositionForUi();
         _EndComposition(_pEditSessionContext, true);
       }
       _EnableLanguageBar(isOpen);
       _UpdateLanguageBar(_status);
     } else {
       _status.ascii_mode = !_status.ascii_mode;
-      _SetKeyboardOpen(true);
+      _RequestImeOpenStateChange(TRUE);
       if (_pLangBarButton && _pLangBarButton->IsLangBarDisabled())
         _EnableLanguageBar(true);
       _HandleLangBarMenuSelect(_status.ascii_mode
                                    ? ID_WEASELTRAY_ENABLE_ASCII
                                    : ID_WEASELTRAY_DISABLE_ASCII);
       if (_pEditSessionContext)
-        m_client.ClearComposition();
+        _ClearCompositionForUi();
       _UpdateLanguageBar(_status);
+      sync_open_state_and_position(_IsKeyboardOpen());
     }
   } else if (IsEqualGUID(guidCompartment,
                          GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION)) {
-    BOOL isOpen = _IsKeyboardOpen();
+    const BOOL isOpen = _IsKeyboardOpen();
+    sync_open_state_and_position(isOpen);
     if (isOpen) {
       weasel::ResponseParser parser(NULL, NULL, &_status, NULL,
                                     &_cand->style());

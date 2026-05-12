@@ -323,6 +323,7 @@
     <ClInclude Include="VHorizontalLayout.h" />
     <ClInclude Include="WeaselPanel.h" />
     <ClInclude Include="..\include\WeaselUI.h" />
+    <ClInclude Include="..\include\WeaselStatusIconPolicy.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="ReadMe.txt" />

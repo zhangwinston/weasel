@@ -32,13 +32,13 @@ STDAPI WeaselTSF::OnSetFocus(ITfDocumentMgr* pDocMgrFocus,
   BOOL keyboardOpen = _IsKeyboardOpen();
   bool shouldDisable = _ShouldDisableImeForForegroundApp(hwndFromDoc);
   if (shouldDisable && toOpenClose && keyboardOpen) {
-    _SetKeyboardOpen(FALSE);
+    _RequestImeOpenStateChange(FALSE);
     _disableImeClosedByRule = TRUE;
   } else {
     // 如果之前因黑名单规则关闭了 IME，而当前前台应用不在黑名单中，则恢复 IME。
     if (!shouldDisable && toOpenClose && !keyboardOpen &&
         _disableImeClosedByRule) {
-      _SetKeyboardOpen(TRUE);
+      _RequestImeOpenStateChange(TRUE);
       _disableImeClosedByRule = FALSE;
     } else if (keyboardOpen) {
       _ScheduleDisableImeDeferCheck();

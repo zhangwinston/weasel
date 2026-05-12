@@ -3,6 +3,7 @@
 #include <RimeWithWeasel.h>
 #include <StringAlgorithm.hpp>
 #include <WeaselConstants.h>
+#include <WeaselStatusIconPolicy.h>
 #include <WeaselUtility.h>
 
 #include <filesystem>
@@ -24,6 +25,7 @@ typedef enum { COLOR_ABGR = 0, COLOR_ARGB, COLOR_RGBA } ColorFormat;
 using namespace weasel;
 
 static RimeApi* rime_api;
+static constexpr size_t kImeOpenStatusIconTimeoutMs = 500;
 WeaselSessionId _GenerateNewWeaselSessionId(SessionStatusMap sm, DWORD pid) {
   if (sm.empty())
     return (WeaselSessionId)(pid + 1);
@@ -42,7 +44,8 @@ RimeWithWeaselHandler::RimeWithWeaselHandler(UI* ui)
       m_global_ascii_mode(false),
       m_show_notifications_time(1200),
       _UpdateUICallback(NULL),
-      m_last_position_session(0) {
+      m_last_position_session(0),
+      m_suppressStatusIconForNextPaint(false) {
   m_ui->InServer() = true;
   rime_api = rime_get_api();
   assert(rime_api);
@@ -308,6 +311,7 @@ void RimeWithWeaselHandler::ClearComposition(WeaselSessionId ipc_id) {
   if (m_disabled)
     return;
   rime_api->clear_composition(to_session_id(ipc_id));
+  m_suppressStatusIconForNextPaint = true;
   _UpdateUI(ipc_id);
   m_active_session = ipc_id;
 }
@@ -400,16 +404,48 @@ DWORD RimeWithWeaselHandler::FocusOut(DWORD param, WeaselSessionId ipc_id) {
   return 0;
 }
 
+void RimeWithWeaselHandler::SetImeOpenState(WeaselSessionId ipc_id,
+                                            ImeOpenState state) {
+  if (m_disabled || !ipc_id)
+    return;
+  SessionStatus& session_status = get_session_status(ipc_id);
+  if (session_status.ime_open_state == state)
+    return;
+  if (session_status.ime_open_state == IME_CLOSED && state == IME_OPEN) {
+    session_status.open_status_icon_state =
+        SessionStatus::OPEN_STATUS_ICON_WAIT_FOR_POSITION;
+  } else if (state != IME_OPEN) {
+    _ResetOpenStatusIconState(session_status);
+  }
+  session_status.ime_open_state = state;
+  if (state != IME_OPEN && m_ui)
+    m_ui->Hide();
+  if (m_active_session == 0 || m_active_session == ipc_id)
+    _UpdateUI(ipc_id);
+}
+
 void RimeWithWeaselHandler::UpdateInputPosition(RECT const& rc,
                                                 WeaselSessionId ipc_id) {
   DLOG(INFO) << "Update input position: (" << rc.left << ", " << rc.top
              << "), ipc_id = " << ipc_id
              << ", m_active_session = " << m_active_session;
+  SessionStatus& session_status = get_session_status(ipc_id);
+  session_status.last_input_pos = rc;
+  session_status.has_input_pos = true;
   m_last_position_session = ipc_id;
   if (m_ui)
     m_ui->UpdateInputPosition(rc);
   if (m_disabled)
     return;
+  if (session_status.open_status_icon_state ==
+          SessionStatus::OPEN_STATUS_ICON_WAIT_FOR_POSITION &&
+      session_status.ime_open_state == IME_OPEN) {
+    session_status.open_status_icon_state =
+        SessionStatus::OPEN_STATUS_ICON_READY_TO_SHOW;
+    _UpdateUI(ipc_id);
+    m_active_session = ipc_id;
+    return;
+  }
   if (m_active_session != ipc_id) {
     _UpdateUI(ipc_id);
     m_active_session = ipc_id;
@@ -557,6 +593,30 @@ bool RimeWithWeaselHandler::_IsDeployerRunning() {
   return deployer_detected;
 }
 
+bool RimeWithWeaselHandler::_ShouldShowOpenStatusIcon(
+    const SessionStatus& session_status,
+    const Context& ctx,
+    const Status& status) const {
+  return session_status.open_status_icon_state ==
+             SessionStatus::OPEN_STATUS_ICON_READY_TO_SHOW &&
+         session_status.has_input_pos && ctx.empty() && !status.composing &&
+         weasel::PanelShowsStatusIcon(status, ctx, session_status.style);
+}
+
+void RimeWithWeaselHandler::_ShowOpenStatusIcon(
+    const SessionStatus& session_status) {
+  m_ui->UpdateInputPosition(session_status.last_input_pos);
+  const size_t timeout = m_show_notifications_time > 0
+                             ? static_cast<size_t>(m_show_notifications_time)
+                             : kImeOpenStatusIconTimeoutMs;
+  m_ui->ShowWithTimeout(timeout);
+}
+
+void RimeWithWeaselHandler::_ResetOpenStatusIconState(
+    SessionStatus& session_status) {
+  session_status.open_status_icon_state = SessionStatus::OPEN_STATUS_ICON_IDLE;
+}
+
 void RimeWithWeaselHandler::_UpdateUI(WeaselSessionId ipc_id) {
   // if m_ui nullptr, _UpdateUI meaningless
   if (!m_ui)
@@ -572,18 +632,50 @@ void RimeWithWeaselHandler::_UpdateUI(WeaselSessionId ipc_id) {
 
   _GetStatus(weasel_status, ipc_id, weasel_context);
 
+  if (m_suppressStatusIconForNextPaint) {
+    weasel_status.suppress_status_icon = true;
+    m_suppressStatusIconForNextPaint = false;
+  }
+
   SessionStatus& session_status = get_session_status(ipc_id);
   if (rime_api->get_option(session_id, "inline_preedit"))
     session_status.style.client_caps |= INLINE_PREEDIT_CAPABLE;
   else
     session_status.style.client_caps &= ~INLINE_PREEDIT_CAPABLE;
 
+  if (weasel_status.ime_open_state != IME_OPEN) {
+    m_ui->Hide();
+    _RefreshTrayIcon(session_id, _UpdateUICallback);
+    weasel_status.suppress_status_icon = false;
+    {
+      std::lock_guard<std::mutex> lock(m_notifier_mutex);
+      m_message_type.clear();
+      m_message_value.clear();
+      m_message_label.clear();
+      m_option_name.clear();
+    }
+    return;
+  }
+
+  const bool should_show_open_status_icon =
+      _ShouldShowOpenStatusIcon(session_status, weasel_context, weasel_status);
+
   if (!_ShowMessage(weasel_context, weasel_status, ipc_id)) {
     m_ui->Hide();
     m_ui->Update(weasel_context, weasel_status);
+    if (should_show_open_status_icon) {
+      _ShowOpenStatusIcon(session_status);
+      _ResetOpenStatusIconState(session_status);
+    } else if (!weasel_context.empty() || weasel_status.composing) {
+      _ResetOpenStatusIconState(session_status);
+    }
+  } else {
+    _ResetOpenStatusIconState(session_status);
   }
 
   _RefreshTrayIcon(session_id, _UpdateUICallback);
+
+  weasel_status.suppress_status_icon = false;
 
   {
     std::lock_guard<std::mutex> lock(m_notifier_mutex);
@@ -1481,7 +1573,9 @@ static void _LoadAppOptions(RimeConfig* config,
 void RimeWithWeaselHandler::_GetStatus(Status& stat,
                                        WeaselSessionId ipc_id,
                                        Context& ctx) {
+  stat.suppress_status_icon = false;
   SessionStatus& session_status = get_session_status(ipc_id);
+  stat.ime_open_state = session_status.ime_open_state;
   RimeSessionId session_id = session_status.session_id;
   RIME_STRUCT(RimeStatus, status);
   if (rime_api->get_status(session_id, &status)) {
