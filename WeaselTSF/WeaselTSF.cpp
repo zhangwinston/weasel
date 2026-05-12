@@ -35,6 +35,7 @@ WeaselTSF::WeaselTSF() {
   _disableImeClosedByRule = FALSE;
 
   _cand = new CCandidateList(this);
+  m_imeOpenState = weasel::IME_OPEN;
 
   DllAddRef();
 }
@@ -120,13 +121,14 @@ STDMETHODIMP WeaselTSF::Deactivate() {
   _tfClientId = TF_CLIENTID_NULL;
 
   _cand->DestroyAll();
+  m_imeOpenState = weasel::IME_CLOSED;
 
   return S_OK;
 }
 
 STDMETHODIMP WeaselTSF::ActivateEx(ITfThreadMgr* pThreadMgr,
-                             TfClientId tfClientId,
-                             DWORD dwFlags) {
+                                   TfClientId tfClientId,
+                                   DWORD dwFlags) {
   com_ptr<ITfDocumentMgr> pDocMgrFocus;
   _activateFlags = dwFlags;
 
@@ -165,6 +167,7 @@ STDMETHODIMP WeaselTSF::ActivateEx(ITfThreadMgr* pThreadMgr,
     goto ExitError;
 
   _EnsureServerConnected();
+  _SetImeOpenState(_IsKeyboardOpen() ? weasel::IME_OPEN : weasel::IME_CLOSED);
 
   return S_OK;
 
@@ -185,6 +188,7 @@ STDMETHODIMP WeaselTSF::OnSetThreadFocus() {
     if (ok)
       _UpdateLanguageBar(_status);
   }
+  _SetImeOpenState(_IsKeyboardOpen() ? weasel::IME_OPEN : weasel::IME_CLOSED);
   return S_OK;
 }
 STDMETHODIMP WeaselTSF::OnKillThreadFocus() {
@@ -217,9 +221,11 @@ STDMETHODIMP WeaselTSF::OnActivated(REFCLSID clsid,
   }
 
   if (isActivated) {
+    _SetImeOpenState(weasel::IME_OPEN);
     _ShowLanguageBar(TRUE);
     _UpdateLanguageBar(_status);
   } else {
+    _SetImeOpenState(weasel::IME_CLOSED);
     _DeleteCandidateList();
     _ShowLanguageBar(FALSE);
   }
@@ -235,6 +241,7 @@ void WeaselTSF::_Reconnect() {
   if (ok) {
     _UpdateLanguageBar(_status);
   }
+  m_client.SetImeOpenState(m_imeOpenState);
 }
 
 static unsigned int retry = 0;
@@ -339,7 +346,7 @@ void WeaselTSF::_OnDisableImeDeferTimer() {
   BOOL keyboardOpen = _IsKeyboardOpen();
   bool shouldDisable = _ShouldDisableImeForForegroundApp(NULL);
   if (shouldDisable && toOpenClose && keyboardOpen) {
-    _SetKeyboardOpen(FALSE);
+    _RequestImeOpenStateChange(FALSE);
     _disableImeClosedByRule = TRUE;
   }
 }
@@ -350,4 +357,25 @@ void WeaselTSF::_UninitDisableImeDefer() {
     DestroyWindow(_hwndDisableImeDefer);
     _hwndDisableImeDefer = NULL;
   }
+}
+
+void WeaselTSF::_SetImeOpenState(weasel::ImeOpenState state) {
+  if (m_imeOpenState == state)
+    return;
+  m_imeOpenState = state;
+  if (state != weasel::IME_OPEN)
+    _cand->HidePanelForClosedKeyboard();
+  if (m_client.Echo())
+    m_client.SetImeOpenState(state);
+}
+
+HRESULT WeaselTSF::_RequestImeOpenStateChange(BOOL fOpen) {
+  if (!fOpen)
+    _EnterImeClosingState();
+  return _SetKeyboardOpen(fOpen);
+}
+
+void WeaselTSF::_ClearCompositionForUi() {
+  _suppressStatusIconForNextPaint = true;
+  m_client.ClearComposition();
 }

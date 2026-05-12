@@ -26,6 +26,7 @@ class ClientImpl {
   void UpdateInputPosition(RECT const& rc);
   DWORD FocusIn();
   DWORD FocusOut();
+  void SetImeOpenState(ImeOpenState state);
   void TrayCommand(UINT menuId);
   bool GetResponseData(ResponseHandler const& handler);
 

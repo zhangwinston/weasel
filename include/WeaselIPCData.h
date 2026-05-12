@@ -146,6 +146,8 @@ struct Context {
 };
 // for icon type in tip
 enum IconType { SCHEMA, FULL_SHAPE };
+// unified IME open state for TSF candidate window + server tip/tray logic
+enum ImeOpenState { IME_OPEN, IME_CLOSING, IME_CLOSED };
 // 由ime管理
 struct Status {
   Status()
@@ -153,7 +155,9 @@ struct Status {
         ascii_mode(false),
         composing(false),
         disabled(false),
-        full_shape(false) {}
+        full_shape(false),
+        suppress_status_icon(false),
+        ime_open_state(IME_OPEN) {}
   void reset() {
     schema_name.clear();
     schema_id.clear();
@@ -162,12 +166,16 @@ struct Status {
     disabled = false;
     full_shape = false;
     type = SCHEMA;
+    suppress_status_icon = false;
+    ime_open_state = IME_OPEN;
   }
   bool operator==(const Status status) {
     return (status.schema_name == schema_name &&
             status.schema_id == schema_id && status.ascii_mode == ascii_mode &&
             status.composing == composing && status.disabled == disabled &&
-            status.full_shape == full_shape && status.type == type);
+            status.full_shape == full_shape && status.type == type &&
+            status.suppress_status_icon == suppress_status_icon &&
+            status.ime_open_state == ime_open_state);
   }
   // 輸入方案
   std::wstring schema_name;
@@ -183,6 +191,11 @@ struct Status {
   bool full_shape;
   // 图标类型, schema/full_shape
   IconType type;
+  // 下一帧 UI：不绘制状态区中/A 等图标、不刷新托盘图标（ClearComposition /
+  // 关键盘等一次性去闪）
+  bool suppress_status_icon;
+  // Single source of truth for whether IME is open, closing, or closed.
+  ImeOpenState ime_open_state;
 };
 
 // 用於向前端告知設置信息

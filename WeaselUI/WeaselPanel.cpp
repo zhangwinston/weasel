@@ -4,7 +4,7 @@
 #include <utility>
 #include <ShellScalingApi.h>
 #include <VersionHelpers.hpp>
-#include <WeaselIPCData.h>
+#include <WeaselStatusIconPolicy.h>
 #include <algorithm>
 
 #include "VerticalLayout.h"
@@ -134,7 +134,7 @@ void WeaselPanel::_CreateLayout() {
 // 更新界面
 void WeaselPanel::Refresh() {
   bool should_show_icon =
-      (m_status.ascii_mode || !m_status.composing || !m_ctx.aux.empty());
+      weasel::PanelShowsStatusIcon(m_status, m_ctx, m_style);
   m_candidateCount = min(m_ctx.cinfo.candies.size(), MAX_CANDIDATES_COUNT);
   // When the candidate window changes from having content to having no content,
   // reset the sticky state

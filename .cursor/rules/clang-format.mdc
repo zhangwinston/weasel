@@ -1,0 +1,15 @@
+---
+description: 所有代码改动须符合仓库 clang-format（CI 会检查）
+alwaysApply: true
+---
+
+# clang-format
+
+本仓库根目录有 `.clang-format`（`BasedOnStyle: Chromium`）。**对本工程做任何修改时，涉及的已格式化语言（主要是 C/C++：`.cpp` `.h` `.hpp` 等）必须已通过 clang-format，否则 `-Wclang-format-violations` 类检查会失败。**
+
+## 修改后自检（在仓库根目录）
+
+- 写入：`clang-format -i -style=file -- <改动的文件>`
+- 或仅检查：`clang-format --dry-run --Werror -style=file -- <文件>`
+
+不要依赖手写缩进符合 Chromium；应以工具输出为准。

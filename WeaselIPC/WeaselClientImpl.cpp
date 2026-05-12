@@ -138,6 +138,13 @@ DWORD ClientImpl::FocusOut() {
   return (DWORD)_SendMessage(WEASEL_IPC_FOCUS_OUT, 0, session_id);
 }
 
+void ClientImpl::SetImeOpenState(ImeOpenState state) {
+  if (!_Active())
+    return;
+  _SendMessage(WEASEL_IPC_SET_IME_OPEN_STATE, static_cast<DWORD>(state),
+               session_id);
+}
+
 void ClientImpl::TrayCommand(UINT menuId) {
   _SendMessage(WEASEL_IPC_TRAY_COMMAND, menuId, session_id);
 }
@@ -254,6 +261,10 @@ DWORD Client::FocusIn() {
 
 DWORD Client::FocusOut() {
   return m_pImpl->FocusOut();
+}
+
+void Client::SetImeOpenState(ImeOpenState state) {
+  m_pImpl->SetImeOpenState(state);
 }
 
 void Client::StartSession() {

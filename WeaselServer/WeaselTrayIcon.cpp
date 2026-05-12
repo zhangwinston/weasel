@@ -89,9 +89,19 @@ void WeaselTrayIcon::Refresh(const WeaselTrayIconState& state) {
     m_disabled = false;
     return;
   }
-  WeaselTrayMode mode = state.disabled     ? DISABLED
-                        : state.ascii_mode ? ASCII
-                                           : ZHUNG;
+
+  if (m_status.ime_open_state != weasel::IME_OPEN) {
+    if (m_mode != INITIAL) {
+      RemoveIcon();
+      m_mode = INITIAL;
+    }
+    return;
+  }
+  if (m_status.suppress_status_icon)
+    return;
+  WeaselTrayMode mode = m_status.disabled     ? DISABLED
+                        : m_status.ascii_mode ? ASCII
+                                              : ZHUNG;
   /* change icon, when
           1,mode changed
           2,icon changed
